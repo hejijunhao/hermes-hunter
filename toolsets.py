@@ -271,7 +271,23 @@ TOOLSETS = {
         "description": "Gateway toolset - union of all messaging platform tools",
         "tools": [],
         "includes": ["hermes-telegram", "hermes-discord", "hermes-whatsapp", "hermes-slack", "hermes-signal", "hermes-homeassistant"]
-    }
+    },
+
+    # ==========================================================================
+    # Hunter subsystem — Overseer tools for managing the Hunter agent
+    # ==========================================================================
+
+    "hunter-overseer": {
+        "description": "Tools for the Overseer to manage the Hunter agent",
+        "tools": [
+            "hunter_spawn", "hunter_kill", "hunter_status",
+            "hunter_logs", "hunter_inject", "hunter_interrupt",
+            "hunter_code_edit", "hunter_code_read", "hunter_diff",
+            "hunter_rollback", "hunter_redeploy",
+            "hunter_model_set", "budget_status",
+        ],
+        "includes": [],
+    },
 }
 
 

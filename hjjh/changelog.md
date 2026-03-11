@@ -1,59 +1,74 @@
 # Hermes Hunter — Changelog
 
+- **1.3.0** — Overseer process tools: `hunter_spawn`, `hunter_kill`, `hunter_status` registered in `hunter-overseer` toolset
+- **1.2.0** — Elephantasm memory integration: `AnimaManager`, `OverseerMemoryBridge`, `HunterMemoryBridge`
+- **1.1.0** — Phase 1 foundation: package scaffolding, budget system, worktree manager, process controller
+- **1.0.0** — Foundation fork of Hermes Agent + architecture design
+
 ---
 
-## 1.0.0 — Foundation Fork
+## 1.3.0 — Overseer Process Tools (Task 6)
 
-**Date:** 2026-03-10
+**Date:** 2026-03-11
 
-### Context
+First Overseer tools registered in the Hermes tool registry — the Overseer can now spawn, kill, and inspect the Hunter via LLM tool calls.
 
-Hermes Hunter is built on top of **Hermes Agent** by [Nous Research](https://nousresearch.com/) — an open-source, model-agnostic AI agent framework (MIT licensed, Python 3.11+, ~2.7k GitHub stars). We forked the Hermes Agent codebase as the foundation for an autonomous bug bounty hunting system.
+### Task 6: Overseer Tools — Process Management
 
-### Why Hermes Agent?
+Registered `hunter_spawn`, `hunter_kill`, `hunter_status` as Hermes tools in the new `hunter-overseer` toolset.
 
-Hermes Agent provides the infrastructure we need out of the box, so we can focus on the hunting architecture rather than rebuilding agent fundamentals:
+**What was built:**
 
-- **AIAgent core loop** (`run_agent.py`) — synchronous conversation loop with tool dispatch, iteration budgets, and session persistence via SQLite. This becomes the runtime for both the Overseer and Hunter agents.
-- **Tool registry** (`tools/registry.py`) — centralised registration with schema discovery, handler dispatch, and availability checking. We register our Overseer tools (process control, code editing, budget management) through the same system.
-- **Skill system** (`skills/`) — Markdown files loaded into system prompts automatically. Security analysis skills are the primary target for Overseer improvement — the safest and most frequent type of code evolution.
-- **40+ built-in tools** — terminal execution, web search, browser automation, file operations, code execution, task delegation. The Hunter inherits all of these for vulnerability analysis.
-- **Subagent delegation** (`delegate_task`) — the Hunter spawns subagents for parallel reconnaissance, analysis, and PoC building. The Overseer refines this strategy over time.
-- **Multi-platform messaging** — Telegram, Discord, Slack, WhatsApp, Signal. Used for human review notifications and approval flows.
-- **6 terminal backends** — local, Docker, SSH, Modal, Daytona, Singularity. The Hunter runs in Docker/Modal for PoC isolation; the Overseer runs locally or on a dedicated VM.
-- **Session persistence** (`hermes_state.py`) — SQLite + FTS5 session storage. Enables Hunter session resume after redeploy.
-- **Context compression** (`agent/context_compressor.py`) — auto-summarisation near token limits. Critical for long-running Hunter analysis sessions.
-- **Process registry** — managed background processes. The Hunter runs as a separate OS process from the Overseer.
-- **Interrupt mechanism** (`_interrupt_requested`) — graceful agent shutdown. Repurposed for the Overseer's redeploy protocol.
-- **Ephemeral system prompt** — prompt fragments appended at API-call time but never persisted to conversation history. The mechanism for Overseer runtime injection (soft interventions).
+- **`hunter/tools/process_tools.py`** (~175 lines) — three tool handlers + lazy controller singleton:
+  - `hunter_spawn` — deploys a new Hunter from the `hunter/live` worktree. Accepts optional `model`, `instruction`, and `resume` parameters. Budget-gated: returns `{"error": "..."}` if budget exhausted. Kills any existing Hunter first.
+  - `hunter_kill` — terminates the running Hunter via three-stage shutdown (flag → SIGTERM → SIGKILL). Returns `killed` or `no_hunter_running`.
+  - `hunter_status` — returns full health snapshot (`running`, `pid`, `session_id`, `model`, `uptime_seconds`, `exit_code`, `error`) plus a human-readable `summary` string.
+  - `_get_controller()` — lazily creates a shared `HunterController` with `WorktreeManager` + `BudgetManager`. Deferred imports avoid circular deps. `_set_controller()` exposed for test injection.
 
-### What the fork contains
+- **`toolsets.py`** — added `hunter-overseer` toolset listing all 13 planned Overseer tools (3 registered now, 10 stubs for Tasks 7–9)
+- **`model_tools.py`** — added `hunter.tools.process_tools` to the `_modules` discovery list (import errors silently ignored)
 
-The full Hermes Agent codebase as of commit `2a062e2`, unmodified except for:
+**Design decisions:**
+- Lazy singleton: created once per process, bridging stateless Hermes tool handlers to the stateful `HunterController`
+- RuntimeError → JSON error: budget exhaustion returns a structured error dict rather than crashing the registry dispatch, keeping the Overseer LLM in the loop
+- `summary` field in status output: human-readable string so the LLM can interpret health at a glance without parsing every field
 
-- **`.gitignore`** — minor additions for hunter-specific paths
-- **`pyproject.toml`** — added `hunter` optional dependency group (`elephantasm`), added `hermes-agent[hunter]` to the `all` extras, added `hunter` and `hunter.tools` to setuptools package discovery
+**Tests:** 29/29 passing — controller singleton (lazy init, caching, test override), hunter_spawn (7: defaults, model, instruction, resume, all args, budget exhausted, other error), hunter_kill (2: running, none), hunter_status (4: running, stopped, not started, crashed), tool registration (6: names, toolset, schema params, OpenAI format), toolset registration (3: exists, contains process tools, contains all planned tools), dispatch integration (4: spawn/kill/status via dispatch, exception handling).
 
-### Architecture designed
+---
 
-The two-agent meta-architecture was designed and documented:
+## 1.2.0 — Elephantasm Memory Integration (Task 5)
 
-- **`hjjh/vision.md`** — strategic vision, feasibility assessment, market tier analysis (mid-tier $500–$5K bounties as the primary target), and the case for self-improvement as the competitive edge
-- **`hjjh/architecture.md`** — full technical design: system topology, Overseer control loop, Hunter workflow, Elephantasm integration, communication protocols, budget system, performance metrics, code evolution tiers, implementation plan (5 phases, 12 tasks), deployment architecture, and safety/legal guardrails
+**Date:** 2026-03-11
 
-### Key architectural decisions
+Connected both agents to Elephantasm for long-term agentic memory and observability — the foundation for cross-target learning and self-improving intervention strategies.
 
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| Process model | Separate OS processes | Code evolution requires kill/modify/restart independently |
-| Parallelism | One Hunter, unlimited subagents | Hunter manages its own parallelism; Overseer refines strategy |
-| Code isolation | Git worktree (`hunter/live` branch) | Shared repo, easy branching, Overseer code unaffected by Hunter changes |
-| Budget model | Independent, time-based, dynamically adjustable | Human sets constraints via watched config file |
-| LLM selection | Open-source models (Qwen 3.5, Kimi K2.5) | Tiered heavy/medium/light; Overseer selects within budget |
-| Memory & observability | Elephantasm | Dual-purpose: long-term agentic memory + event stream monitoring |
-| Self-regulation | Overseer learns its own intervention cadence | Via Elephantasm memory of what strategies worked/failed |
-| Human involvement | Minimal — review reports only | Overseer reviews first, then presents to human for approval |
-| Primary metric | $$$ — reports that earn bounty payouts | Everything else is a supporting signal |
+### Task 5: Elephantasm Integration Layer
+
+Implemented the Elephantasm SDK wrapper providing long-term agentic memory for both agents.
+
+**What was built:**
+
+- **`hunter/memory.py`** (~405 lines) — three classes + safety wrappers:
+  - `AnimaManager` — one-time Anima creation + local JSON ID cache (`animas.json`). Idempotent: handles partial cache, API failures, and missing SDK gracefully.
+  - `OverseerMemoryBridge` — `inject()` retrieves learned strategies as prompt-ready text; `extract_decision()`, `extract_observation()`, and `extract_intervention_result()` record Overseer actions with importance scoring (non-neutral interventions get 0.9). Auto-generated session IDs (`overseer-YYYYMMDD-HHMMSS`).
+  - `HunterMemoryBridge` — `inject()` retrieves vulnerability patterns and similar past findings; `extract_step()` captures tool calls and messages each iteration; `extract_finding()` records vulnerabilities with severity-mapped importance (critical=1.0 → info=0.3); `extract_result()` records session summaries with scalar-only meta filtering; `check_duplicate()` does semantic dedup (similarity >0.85).
+  - `_safe_extract()` / `_safe_inject()` — non-fatal wrappers. All Elephantasm errors are logged at WARNING but never propagated. Rate-limit errors trigger 5s backoff.
+
+**Design decisions:**
+- Module-level imports with `try/except` (fallback to None when SDK not installed) — makes the module patchable in tests and avoids repeated import overhead
+- JSON file cache for Anima IDs — the SDK has no `list_animas` API, only `create_anima`, so we cache `{name: id}` locally
+- Non-fatal everywhere — agents function identically whether Elephantasm is up, down, or uninstalled. Memory is a performance enhancer, not a hard dependency.
+- Scalar-only meta filtering in `extract_result()` — prevents nested dicts breaking event storage
+
+**SDK findings:**
+- `create_anima(name, description)` raises on conflict (no upsert) — hence the cache-first approach
+- No `list_animas` or `get_anima_by_name` endpoint — local cache is essential
+- `RateLimitError` has no `retry_after` attribute — we use a fixed 5s backoff
+- `MemoryPack.content` is raw text; `.as_prompt()` formats for injection
+- `ScoredMemory` has `.similarity` (float or None) and `.summary` (str)
+
+**Tests:** 42/42 passing — AnimaManager (9: create/cache/partial/failure/no-SDK/get/missing/no-file/corrupt), OverseerMemoryBridge (11: init, inject prompt/empty/error/no-content, extract decision/observation, intervention result improvement/neutral, non-fatal extract, close, session ID format), HunterMemoryBridge (19: init, set_session, inject prompt/empty, extract_step tool/message/both/truncation, extract_finding high/critical, extract_result scalar filter, check_duplicate found/not-found/no-memories/null-similarity/error, non-fatal extract, close), _severity_to_importance (3: all levels, case-insensitive, unknown default).
 
 ---
 
@@ -189,4 +204,59 @@ Implemented the Hunter process lifecycle manager and subprocess entry point — 
 | Runner entry point | `hunter/runner.py` | ~230 | (covered by control tests) |
 | **Total** | | **~1,300** | **64** |
 
-**Remaining Phase 1 tasks (5–12):** Elephantasm memory integration, Overseer tool implementations (process, injection, code editing, budget/model), Overseer main loop, system prompts, and CLI integration.
+**Remaining Phase 1 tasks (7–12):** Overseer tool implementations (injection, code editing, budget/model), Overseer main loop, system prompts, and CLI integration.
+
+---
+
+## 1.0.0 — Foundation Fork
+
+**Date:** 2026-03-10
+
+### Context
+
+Hermes Hunter is built on top of **Hermes Agent** by [Nous Research](https://nousresearch.com/) — an open-source, model-agnostic AI agent framework (MIT licensed, Python 3.11+, ~2.7k GitHub stars). We forked the Hermes Agent codebase as the foundation for an autonomous bug bounty hunting system.
+
+### Why Hermes Agent?
+
+Hermes Agent provides the infrastructure we need out of the box, so we can focus on the hunting architecture rather than rebuilding agent fundamentals:
+
+- **AIAgent core loop** (`run_agent.py`) — synchronous conversation loop with tool dispatch, iteration budgets, and session persistence via SQLite. This becomes the runtime for both the Overseer and Hunter agents.
+- **Tool registry** (`tools/registry.py`) — centralised registration with schema discovery, handler dispatch, and availability checking. We register our Overseer tools (process control, code editing, budget management) through the same system.
+- **Skill system** (`skills/`) — Markdown files loaded into system prompts automatically. Security analysis skills are the primary target for Overseer improvement — the safest and most frequent type of code evolution.
+- **40+ built-in tools** — terminal execution, web search, browser automation, file operations, code execution, task delegation. The Hunter inherits all of these for vulnerability analysis.
+- **Subagent delegation** (`delegate_task`) — the Hunter spawns subagents for parallel reconnaissance, analysis, and PoC building. The Overseer refines this strategy over time.
+- **Multi-platform messaging** — Telegram, Discord, Slack, WhatsApp, Signal. Used for human review notifications and approval flows.
+- **6 terminal backends** — local, Docker, SSH, Modal, Daytona, Singularity. The Hunter runs in Docker/Modal for PoC isolation; the Overseer runs locally or on a dedicated VM.
+- **Session persistence** (`hermes_state.py`) — SQLite + FTS5 session storage. Enables Hunter session resume after redeploy.
+- **Context compression** (`agent/context_compressor.py`) — auto-summarisation near token limits. Critical for long-running Hunter analysis sessions.
+- **Process registry** — managed background processes. The Hunter runs as a separate OS process from the Overseer.
+- **Interrupt mechanism** (`_interrupt_requested`) — graceful agent shutdown. Repurposed for the Overseer's redeploy protocol.
+- **Ephemeral system prompt** — prompt fragments appended at API-call time but never persisted to conversation history. The mechanism for Overseer runtime injection (soft interventions).
+
+### What the fork contains
+
+The full Hermes Agent codebase as of commit `2a062e2`, unmodified except for:
+
+- **`.gitignore`** — minor additions for hunter-specific paths
+- **`pyproject.toml`** — added `hunter` optional dependency group (`elephantasm`), added `hermes-agent[hunter]` to the `all` extras, added `hunter` and `hunter.tools` to setuptools package discovery
+
+### Architecture designed
+
+The two-agent meta-architecture was designed and documented:
+
+- **`hjjh/vision.md`** — strategic vision, feasibility assessment, market tier analysis (mid-tier $500–$5K bounties as the primary target), and the case for self-improvement as the competitive edge
+- **`hjjh/architecture.md`** — full technical design: system topology, Overseer control loop, Hunter workflow, Elephantasm integration, communication protocols, budget system, performance metrics, code evolution tiers, implementation plan (5 phases, 12 tasks), deployment architecture, and safety/legal guardrails
+
+### Key architectural decisions
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| Process model | Separate OS processes | Code evolution requires kill/modify/restart independently |
+| Parallelism | One Hunter, unlimited subagents | Hunter manages its own parallelism; Overseer refines strategy |
+| Code isolation | Git worktree (`hunter/live` branch) | Shared repo, easy branching, Overseer code unaffected by Hunter changes |
+| Budget model | Independent, time-based, dynamically adjustable | Human sets constraints via watched config file |
+| LLM selection | Open-source models (Qwen 3.5, Kimi K2.5) | Tiered heavy/medium/light; Overseer selects within budget |
+| Memory & observability | Elephantasm | Dual-purpose: long-term agentic memory + event stream monitoring |
+| Self-regulation | Overseer learns its own intervention cadence | Via Elephantasm memory of what strategies worked/failed |
+| Human involvement | Minimal — review reports only | Overseer reviews first, then presents to human for approval |
+| Primary metric | $$$ — reports that earn bounty payouts | Everything else is a supporting signal |
