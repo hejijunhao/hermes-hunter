@@ -1,5 +1,6 @@
 # Hermes Hunter — Changelog
 
+- **1.9.0** — CLI integration: `hermes hunter` subcommand tree — setup, overseer, spawn, kill, status, budget, logs
 - **1.8.0** — Overseer main loop: `OverseerLoop` — continuous monitoring, evaluation, and improvement of the Hunter agent
 - **1.7.0** — Overseer system prompt + reference docs: identity, intervention strategy, budget management, decision framework
 - **1.6.0** — Budget/model tools: `budget_status`, `hunter_model_set` — all 13 Overseer tools now complete
@@ -9,6 +10,69 @@
 - **1.2.0** — Elephantasm memory integration: `AnimaManager`, `OverseerMemoryBridge`, `HunterMemoryBridge`
 - **1.1.0** — Phase 1 foundation: package scaffolding, budget system, worktree manager, process controller
 - **1.0.0** — Foundation fork of Hermes Agent + architecture design
+
+---
+
+## 1.9.0 — CLI Integration (Task 12)
+
+**Date:** 2026-03-12
+
+The final Phase 1 task — all Hunter subsystem functionality exposed via `hermes hunter` CLI subcommands.
+
+### Task 12: CLI Entry Points
+
+Registered 7 subcommands under `hermes hunter`, with PID file-based cross-process discovery for standalone CLI usage.
+
+**What was built:**
+
+- **`hunter/cli.py`** (~290 lines) — full CLI implementation:
+  - `register_hunter_commands()` — argparse registration for all 7 subcommands, returns parser for `main.py` to set handler
+  - `handle_hunter_command()` — dispatcher, defaults to `status` when no subcommand given
+  - **PID/meta helpers** — `_write_pid_meta()`, `_read_pid_meta()`, `_clear_pid_meta()` for cross-process Hunter discovery via `~/.hermes/hunter/hunter.pid` + `hunter.meta.json`. Follows the `gateway/status.py` pattern with `os.kill(pid, 0)` liveness checks and auto-cleanup of stale PIDs.
+  - `_cmd_setup` — idempotent one-time setup: `ensure_hunter_home()`, `WorktreeManager().setup()`, `BudgetManager().create_default_config()`, `AnimaManager.ensure_animas()` (non-fatal)
+  - `_cmd_overseer` — creates `OverseerLoop(model=, check_interval=)` and calls `.run()`, blocks until Ctrl+C
+  - `_cmd_spawn` — checks PID file for existing Hunter, creates `HunterController`, calls `spawn(detach=True)`, writes PID/meta files
+  - `_cmd_kill` — three-stage kill (interrupt flag → SIGTERM → SIGKILL), clears PID file
+  - `_cmd_status` — shows Hunter process (from PID file), budget (from `BudgetManager`), worktree (from `WorktreeManager`), all with graceful degradation
+  - `_cmd_budget` — routes to status/set/history. Set uses `parse_budget_string()` + `BudgetManager.update_config()`
+  - `_cmd_logs` — finds most recent `.log` file by mtime, supports `--tail N` and `--follow` (poll-based `tail -f`)
+
+- **`hunter/control.py`** — added `detach: bool = False` parameter to `HunterProcess.spawn()`:
+  - When `detach=True`: stdout goes directly to log file (`Popen(stdout=log_fh)`), no pipe, no capture thread. The subprocess survives the parent process exiting.
+  - When `detach=False`: existing behavior unchanged (pipe + capture thread for Overseer's in-memory log buffer).
+  - Passed through in `HunterController.spawn()`.
+
+- **`hermes_cli/main.py`** — added hunter subcommand registration with `ImportError` guard for optional hunter package
+
+**Design decisions:**
+- PID file for cross-process discovery: `hermes hunter spawn` in one CLI invocation, `hermes hunter kill` in another. Follows the existing `gateway/status.py` pattern.
+- Detached spawn: eliminates SIGPIPE risk when CLI exits after spawning. The Hunter subprocess writes directly to its log file, independent of the parent process.
+- Default to `status` when no subcommand given: matches user expectation ("what's going on?")
+- Graceful degradation in `_cmd_status`: budget/worktree sections wrapped in try/except, so status works even before `hermes hunter setup`
+
+**Tests:** 51/51 passing — PID/meta helpers (8: roundtrip, stale cleanup, missing, invalid, clear, alive/dead), argparse registration (12: all subcommands, arguments, defaults), dispatch (4: default to status, routing, error handling), setup (3: all components, already set up, Elephantasm failure), overseer (3: default args, model override, startup message), spawn (3: success + PID write, already running, budget exhausted), kill (3: no process, graceful, SIGTERM escalation), status (4: running, not running, degraded, alert), budget (5: default, set valid, set invalid, history with data, history empty), logs (5: no dir, no files, tail N, picks most recent, tail helper).
+
+---
+
+## Phase 1 Complete
+
+All 12 tasks (+ Task 13 integration testing remaining) are now implemented:
+
+| Task | Component | Tests |
+|------|-----------|-------|
+| 1 | Package scaffolding | — |
+| 2 | Budget system | 9 |
+| 3 | Worktree manager | 20 |
+| 4 | Process controller | 35 |
+| 5 | Elephantasm memory | 42 |
+| 6 | Process tools | 29 |
+| 7 | Inject tools | 33 |
+| 8 | Code tools | 49 |
+| 9 | Budget tools | 27 |
+| 10 | Overseer loop | 53 |
+| 11 | System prompt | 18 |
+| 12 | CLI integration | 51 |
+| **Total** | | **337** |
 
 ---
 

@@ -2556,7 +2556,17 @@ For more help on a command:
         help="Skip confirmation prompts"
     )
     uninstall_parser.set_defaults(func=cmd_uninstall)
-    
+
+    # =========================================================================
+    # hunter command (optional — requires hunter package)
+    # =========================================================================
+    try:
+        from hunter.cli import register_hunter_commands, handle_hunter_command
+        hunter_parser = register_hunter_commands(subparsers)
+        hunter_parser.set_defaults(func=handle_hunter_command)
+    except ImportError:
+        pass  # hunter package not available
+
     # =========================================================================
     # Parse and execute
     # =========================================================================

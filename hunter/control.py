@@ -139,12 +139,16 @@ class HunterProcess:
 
     # ── Lifecycle ────────────────────────────────────────────────────────
 
-    def spawn(self, initial_instruction: str = None) -> None:
+    def spawn(self, initial_instruction: str = None, detach: bool = False) -> None:
         """Start the Hunter as a subprocess.
 
         Args:
             initial_instruction: The first user message the Hunter receives.
                 Defaults to a generic hunting directive.
+            detach: If True, redirect stdout directly to the log file instead
+                of piping through the parent process. Use this when the parent
+                process will exit after spawning (e.g., CLI ``hermes hunter spawn``).
+                The subprocess continues running independently.
 
         Raises:
             RuntimeError: If the process is already running.
@@ -173,30 +177,46 @@ class HunterProcess:
         )
         logger.debug("Hunter command: %s", " ".join(cmd))
 
-        self._process = subprocess.Popen(
-            cmd,
-            cwd=str(self.worktree_path),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,  # Merge stderr into stdout for unified capture
-            env=env,
-            text=True,
-            bufsize=1,  # Line-buffered
-        )
+        if detach:
+            # CLI mode: write directly to log file so the subprocess survives
+            # the parent exiting (no pipe to break, no SIGPIPE).
+            self._detach_log_fh = open(self._log_file_path, "a", encoding="utf-8")
+            self._process = subprocess.Popen(
+                cmd,
+                cwd=str(self.worktree_path),
+                stdout=self._detach_log_fh,
+                stderr=subprocess.STDOUT,
+                env=env,
+            )
+        else:
+            # Overseer mode: pipe stdout for in-memory capture + monitoring.
+            self._process = subprocess.Popen(
+                cmd,
+                cwd=str(self.worktree_path),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                env=env,
+                text=True,
+                bufsize=1,  # Line-buffered
+            )
+
         self._pid = self._process.pid
         self._started_at = time.monotonic()
         self._exited = False
         self._exit_code = None
         self._error = None
 
-        # Start background thread to capture output
-        self._capture_thread = threading.Thread(
-            target=self._capture_output,
-            name=f"hunter-capture-{self.session_id}",
-            daemon=True,
-        )
-        self._capture_thread.start()
+        if not detach:
+            # Start background thread to capture output
+            self._capture_thread = threading.Thread(
+                target=self._capture_output,
+                name=f"hunter-capture-{self.session_id}",
+                daemon=True,
+            )
+            self._capture_thread.start()
 
-        logger.info("Hunter spawned: pid=%d session=%s", self._pid, self.session_id)
+        logger.info("Hunter spawned: pid=%d session=%s detach=%s",
+                     self._pid, self.session_id, detach)
 
     def kill(self, timeout: float = _KILL_GRACE_SECONDS) -> bool:
         """Stop the Hunter process.
@@ -476,6 +496,7 @@ class HunterController:
         initial_instruction: str = None,
         resume_session: bool = False,
         session_id: str = None,
+        detach: bool = False,
     ) -> HunterProcess:
         """Spawn a new Hunter. Kills any existing one first.
 
@@ -484,6 +505,9 @@ class HunterController:
             initial_instruction: First message for the Hunter.
             resume_session: Resume the previous session's conversation.
             session_id: Explicit session ID. Auto-generated if omitted.
+            detach: If True, the subprocess writes directly to its log file
+                instead of piping through this process. Use for CLI spawns
+                where the parent process will exit.
 
         Returns:
             The newly spawned HunterProcess.
@@ -523,7 +547,7 @@ class HunterController:
             session_id=session_id,
             resume_session=resume_session,
         )
-        proc.spawn(initial_instruction=initial_instruction)
+        proc.spawn(initial_instruction=initial_instruction, detach=detach)
         self._current = proc
         return proc
 
