@@ -13,6 +13,7 @@ from hunter.bootstrap import (
     TRANSITION_MIN_SKILLS,
     BootstrapState,
     TransitionResult,
+    _ARCHITECTURE_DOC_PATH,
     check_transition,
     detect_bootstrap,
     get_testing_targets,
@@ -266,14 +267,12 @@ class TestSeedArchitectureKnowledge:
         cache.write_text(json.dumps({}))
 
         memory = MagicMock()
-        with patch("hunter.bootstrap.Path") as mock_path_cls:
-            # Make the architecture path not exist
-            mock_path_cls.return_value.parent.parent.__truediv__ = MagicMock(
-                return_value=MagicMock(exists=MagicMock(return_value=False))
-            )
-            # But the prompts path should still work — skip this test
-            # if mocking is too complex. The real test is test_extracts_sections.
-            pass
+        # Point the architecture doc path to a non-existent file
+        fake_arch_path = tmp_path / "nonexistent" / "architecture.md"
+        with patch("hunter.bootstrap._ARCHITECTURE_DOC_PATH", fake_arch_path):
+            result = seed_architecture_knowledge(memory, cache_path=cache)
+        assert result is False
+        memory.extract_decision.assert_not_called()
 
 
 # =============================================================================
@@ -295,3 +294,17 @@ class TestSplitSections:
 
     def test_no_sections(self):
         assert _split_sections("Just some text\nwithout headers") == {}
+
+    def test_ignores_headers_inside_code_blocks(self):
+        content = (
+            "## Real Section\n"
+            "Body\n"
+            "```\n"
+            "## Not A Header\n"
+            "```\n"
+            "Still in Real Section\n"
+        )
+        sections = _split_sections(content)
+        assert "## Real Section" in sections
+        assert "## Not A Header" not in sections
+        assert "Still in Real Section" in sections["## Real Section"]

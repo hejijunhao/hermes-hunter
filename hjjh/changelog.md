@@ -1,5 +1,6 @@
 # Hermes Prime — Changelog
 
+- **5.1.0** — Post-Phase-D cleanup: 14 code-review issues fixed (resource leaks, partial clone cleanup, Dockerfile hardening, credential exposure, supply-chain risk, version pinning, stale cache, silent exceptions, type annotations)
 - **5.0.0** — Bootstrap mode: empty-repo detection, bootstrap prompt injection, architecture seeding via Elephantasm, testing target list, automatic transition to normal mode
 - **4.1.0** — Pre-Phase-D hardening: retry logic in Fly API client, bounded history, TTL cache for `is_running`, clone verification in Hunter entrypoint
 - **4.0.0** — Deployment infrastructure: Dockerfiles, entrypoint scripts, fly.toml configs, deploy script — ready to run the two-machine system on Fly.io
@@ -16,6 +17,68 @@
 - **1.2.0** — Elephantasm memory integration: `AnimaManager`, `OverseerMemoryBridge`, `HunterMemoryBridge`
 - **1.1.0** — Phase 1 foundation: package scaffolding, budget system, worktree manager, process controller
 - **1.0.0** — Foundation fork of Hermes Agent + architecture design
+
+---
+
+## 5.1.0 — Post-Phase-D Cleanup
+
+**Date:** 2026-03-14
+
+Code review of Phases A–D identified 14 issues across production code, deployment artifacts, and tests. All resolved — 10 files modified, 8 new tests added, 113 tests passing (zero regressions).
+
+### HIGH fixes (deployment blockers)
+
+- **H1: `httpx.Client` never closed** — `FlyMachinesClient` is now a context manager (`__enter__`/`__exit__`). `FlyHunterController.close()` delegates to `self._fly.close()`. Prevents connection pool leaks in long-running Overseer.
+- **H2+M1: Partial clone left on disk** — `setup()` now catches `TimeoutExpired` and `CalledProcessError`, removes partial clone via `shutil.rmtree()`, re-raises as `WorktreeError`.
+- **H3: Dockerfile.overseer silences install failures** — replaced `2>/dev/null || true` with informational echo fallback. Second install (after full source copy) fails the build on error.
+- **H4: `AUTH_PASSWORD` in process listing** — credentials written to `chmod 600` temp file; ttyd receives `--credential file:/path` instead of inline password.
+
+### MEDIUM fixes (robustness & security)
+
+- **M2: Silent `wait_for_state` failure in `kill()`** — bare `pass` replaced with `logger.warning()`.
+- **M3: Stale TTL cache** — `get_status()` now syncs the `is_running` cache when it observes a non-running state.
+- **M4: `resume_session=True` silently ignored** — logs a warning when no current machine exists.
+- **M5: Hunter Dockerfile `curl | bash`** — replaced with multi-stage build copying Node.js from official `node:20-slim` image.
+- **M6: Unpinned semgrep** — `pip install semgrep` → `pip install 'semgrep>=1.45.0,<2.0'`.
+
+### LOW fixes (polish)
+
+- **L1: `grep` for JSON parsing** — deploy script now uses `jq -e` with a prerequisite check.
+- **L2: `_split_sections()` code block naivety** — tracks fenced code blocks, skips `## ` detection inside them.
+- **L3: Thread safety comment** — documented single-threaded assumption on all 4 tool module singletons.
+- **L4: Untyped return** — `get_testing_targets() -> list` → `list[dict[str, Any]]`.
+
+### Test coverage gaps closed
+
+| Test | File |
+|------|------|
+| `FlyMachinesClient` context manager + `close()` | `tests/test_fly_api.py` |
+| `FlyHunterController.close()` delegation | `tests/test_fly_control.py` |
+| `TimeoutExpired` / `CalledProcessError` clone cleanup | `tests/test_fly_worktree.py` |
+| `get_status()` cache sync on non-running | `tests/test_fly_control.py` |
+| `resume_session=True` warning | `tests/test_fly_control.py` |
+| `_split_sections` code block awareness | `tests/test_hunter_bootstrap.py` |
+| `test_skips_if_arch_doc_missing` (was incomplete `pass`) | `tests/test_hunter_bootstrap.py` |
+
+### Files changed
+
+| File | Action | Purpose |
+|------|--------|---------|
+| `hunter/backends/fly_api.py` | Modified | Context manager methods |
+| `hunter/backends/fly_control.py` | Modified | `close()`, M2/M3/M4 fixes |
+| `hunter/backends/fly_worktree.py` | Modified | Clone failure cleanup |
+| `hunter/bootstrap.py` | Modified | Code block awareness, type annotation, extracted `_ARCHITECTURE_DOC_PATH` |
+| `hunter/tools/{process,code,inject,budget}_tools.py` | Modified | Thread safety comments |
+| `deploy/Dockerfile.overseer` | Modified | Install failure visibility |
+| `deploy/Dockerfile.hunter` | Modified | Multi-stage build, semgrep pinning |
+| `deploy/overseer-entrypoint.sh` | Modified | File-based credential auth |
+| `scripts/deploy-overseer.sh` | Modified | `jq` JSON parsing |
+| `tests/test_fly_api.py` | Modified | +2 tests |
+| `tests/test_fly_control.py` | Modified | +3 test classes |
+| `tests/test_fly_worktree.py` | Modified | +3 tests |
+| `tests/test_hunter_bootstrap.py` | Modified | +1 test, 1 fix |
+
+**Tests:** 113 passed (+8 new, zero regressions).
 
 ---
 

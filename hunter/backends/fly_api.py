@@ -56,6 +56,12 @@ class FlyMachinesClient:
         """Close the underlying HTTP client."""
         self._client.close()
 
+    def __enter__(self) -> "FlyMachinesClient":
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
     # -- Machine lifecycle ------------------------------------------------
 
     def create_machine(self, config: dict) -> dict:

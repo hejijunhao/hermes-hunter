@@ -405,6 +405,46 @@ class TestProperties:
         assert len(controller.history) <= _MAX_HISTORY
 
 
+class TestClose:
+
+    def test_close_delegates_to_fly_client(self, controller, mock_fly_client):
+        controller.close()
+        mock_fly_client.close.assert_called_once()
+
+
+class TestResumeSessionWarning:
+
+    def test_warns_when_no_current_machine(self, controller, caplog):
+        """resume_session=True with no current machine logs a warning."""
+        import logging
+        with caplog.at_level(logging.WARNING):
+            controller.spawn(resume_session=True)
+        assert "resume_session=True but no current machine" in caplog.text
+
+
+class TestGetStatusCacheSync:
+
+    def test_get_status_invalidates_cache_on_non_running(self, controller, mock_fly_client):
+        """get_status() should update the is_running cache when the machine isn't running."""
+        controller.spawn()
+        # Warm the cache to "running"
+        mock_fly_client.get_machine.return_value = {"state": "started"}
+        assert controller.is_running is True
+
+        # Now machine is stopped — get_status should sync cache
+        mock_fly_client.get_machine.return_value = {"state": "stopped"}
+        status = controller.get_status()
+        assert status.running is False
+
+        # Cache should now reflect the stopped state without needing an API call
+        call_count_before = mock_fly_client.get_machine.call_count
+        assert controller.is_running is False
+        # Didn't need an extra API call — cache was synced by get_status
+        # (is_running returns False via cache OR _current is still set, so
+        #  it may query. The key assertion is the cache value itself.)
+        assert controller._is_running_cache is False
+
+
 class TestIsRunningCache:
 
     def test_cache_avoids_repeated_api_calls(self, controller, mock_fly_client):

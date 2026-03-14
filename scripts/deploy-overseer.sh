@@ -20,9 +20,15 @@ fi
 
 echo "=== Hermes Prime Deployment ==="
 
+# --- Prerequisites: jq ---
+if ! command -v jq &>/dev/null; then
+    echo "ERROR: 'jq' not found. Install from https://stedolan.github.io/jq/" >&2
+    exit 1
+fi
+
 # --- Create apps if needed ---
 for app in "$OVERSEER_APP" "$HUNTER_APP"; do
-    if ! fly apps list --json | grep -q "\"$app\""; then
+    if ! fly apps list --json | jq -e ".[] | select(.Name == \"$app\")" >/dev/null 2>&1; then
         echo "Creating app: $app"
         fly apps create "$app"
     else
@@ -31,7 +37,7 @@ for app in "$OVERSEER_APP" "$HUNTER_APP"; do
 done
 
 # --- Create persistent volume for Overseer ---
-if ! fly volumes list --app "$OVERSEER_APP" --json | grep -q '"name":"overseer_data"'; then
+if ! fly volumes list --app "$OVERSEER_APP" --json | jq -e '.[] | select(.name == "overseer_data")' >/dev/null 2>&1; then
     echo "Creating volume: overseer_data"
     fly volumes create overseer_data \
         --app "$OVERSEER_APP" \

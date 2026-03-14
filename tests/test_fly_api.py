@@ -32,6 +32,19 @@ class TestFlyMachinesClientInit:
             assert call_kwargs["headers"]["User-Agent"] == "hermes-prime/1.0"
             assert call_kwargs["base_url"] == FlyMachinesClient.BASE_URL
 
+    def test_context_manager(self):
+        with patch("hunter.backends.fly_api.httpx.Client") as MockClient:
+            instance = MagicMock()
+            MockClient.return_value = instance
+
+            with FlyMachinesClient(app_name="app", api_token="tok") as c:
+                assert c is not None
+            instance.close.assert_called_once()
+
+    def test_close_delegates(self, client, mock_httpx_client):
+        client.close()
+        mock_httpx_client.close.assert_called_once()
+
 
 class TestCreateMachine:
 

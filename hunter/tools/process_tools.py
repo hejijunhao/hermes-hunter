@@ -23,6 +23,9 @@ logger = logging.getLogger(__name__)
 # Controller singleton
 # =============================================================================
 
+# Single-threaded assumption: this global is only safe because the Overseer
+# loop runs synchronously.  If concurrent access becomes possible, guard with
+# a threading.Lock.
 _controller = None
 
 

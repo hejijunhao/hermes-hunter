@@ -11,10 +11,11 @@ RUN ARCH=$(dpkg --print-architecture) && \
       -o /usr/local/bin/ttyd && \
     chmod +x /usr/local/bin/ttyd
 
-# Python deps (cached layer)
-COPY pyproject.toml /app/pyproject.toml
+# Python deps (cached layer — install will partially fail without source,
+# but pip caches the downloaded wheels for the real install below)
+COPY pyproject.toml setup.cfg* setup.py* /app/
 WORKDIR /app
-RUN pip install --no-cache-dir -e ".[hunter]" 2>/dev/null || true
+RUN pip install --no-cache-dir -e ".[hunter]" || echo "Pre-install skipped (source not yet copied)"
 
 # Full source
 COPY . /app

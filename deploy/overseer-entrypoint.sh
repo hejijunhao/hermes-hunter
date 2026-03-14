@@ -30,7 +30,11 @@ trap cleanup SIGTERM SIGINT
 TTYD_ARGS=("--port" "8080" "--writable")
 
 if [ -n "${AUTH_PASSWORD:-}" ]; then
-    TTYD_ARGS+=("--credential" "hermes:${AUTH_PASSWORD}")
+    # Write credentials to a temp file so the password isn't visible in `ps aux`.
+    CRED_FILE=$(mktemp)
+    echo "hermes:${AUTH_PASSWORD}" > "$CRED_FILE"
+    chmod 600 "$CRED_FILE"
+    TTYD_ARGS+=("--credential" "file:${CRED_FILE}")
 fi
 
 exec ttyd "${TTYD_ARGS[@]}" bash

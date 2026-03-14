@@ -81,6 +81,10 @@ class FlyHunterController:
         self._is_running_cache: Optional[bool] = None
         self._is_running_cache_ts: float = 0.0
 
+    def close(self) -> None:
+        """Release resources (close underlying HTTP client)."""
+        self._fly.close()
+
     # -- ControlBackend protocol (properties) --------------------------------
 
     @property
@@ -174,6 +178,8 @@ class FlyHunterController:
         # Determine session ID
         if resume_session and self._current is not None and session_id is None:
             session_id = self._current.session_id
+        elif resume_session and self._current is None and session_id is None:
+            logger.warning("resume_session=True but no current machine — starting new session")
         if session_id is None:
             session_id = f"hunter-{uuid.uuid4().hex[:8]}"
 
@@ -247,8 +253,8 @@ class FlyHunterController:
 
         try:
             self._fly.wait_for_state(machine_id, "stopped", timeout=30)
-        except FlyAPIError:
-            pass
+        except FlyAPIError as exc:
+            logger.warning("Machine %s did not reach 'stopped' state: %s", machine_id, exc)
 
         try:
             self._fly.destroy_machine(machine_id)
@@ -310,6 +316,11 @@ class FlyHunterController:
             machine = self._fly.get_machine(self._current.machine_id)
             state = machine.get("state", "unknown")
             running = state == "started"
+
+            # Synchronise the is_running cache with the fresh API response.
+            if not running:
+                self._is_running_cache = False
+                self._is_running_cache_ts = time.monotonic()
 
             return HunterStatus(
                 running=running,

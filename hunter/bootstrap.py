@@ -17,7 +17,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import Any, TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from hunter.backends.base import WorktreeBackend
@@ -124,7 +124,7 @@ BOOTSTRAP_TESTING_TARGETS = [
 ]
 
 
-def get_testing_targets() -> list:
+def get_testing_targets() -> list[dict[str, Any]]:
     """Return the list of known-vulnerable repos for bootstrap testing."""
     return list(BOOTSTRAP_TESTING_TARGETS)
 
@@ -226,6 +226,8 @@ def load_bootstrap_prompt() -> str:
 
 _ARCHITECTURE_SEEDED_KEY = "architecture_seeded"
 
+_ARCHITECTURE_DOC_PATH = Path(__file__).parent.parent / "hjjh" / "architecture.md"
+
 # Sections from hjjh/architecture.md to seed into Elephantasm.
 # These are the most relevant for the Overseer during bootstrap.
 _SEED_SECTION_PREFIXES = [
@@ -263,7 +265,7 @@ def seed_architecture_knowledge(
         return False
 
     # Locate architecture doc
-    arch_path = Path(__file__).parent.parent / "hjjh" / "architecture.md"
+    arch_path = _ARCHITECTURE_DOC_PATH
     if not arch_path.exists():
         logger.warning("Architecture doc not found at %s — skipping seed", arch_path)
         return False
@@ -310,9 +312,12 @@ def _split_sections(content: str) -> dict[str, str]:
     sections: dict[str, str] = {}
     current_header: Optional[str] = None
     current_lines: list[str] = []
+    in_code_block = False
 
     for line in content.split("\n"):
-        if line.startswith("## "):
+        if line.startswith("```"):
+            in_code_block = not in_code_block
+        if not in_code_block and line.startswith("## "):
             # Save previous section
             if current_header is not None:
                 sections[current_header] = "\n".join(current_lines)

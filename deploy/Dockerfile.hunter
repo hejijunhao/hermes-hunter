@@ -1,3 +1,7 @@
+# Stage 1: grab the Node.js binary from an official image
+FROM node:20-slim AS node-bin
+
+# Stage 2: main image
 FROM python:3.11-slim
 
 # System deps
@@ -5,13 +9,14 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends git curl ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
-# Node.js 20.x (for JS-based security tools/targets)
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
-    apt-get install -y --no-install-recommends nodejs && \
-    rm -rf /var/lib/apt/lists/*
+# Node.js 20.x — copied from official image (avoids piping remote scripts to bash)
+COPY --from=node-bin /usr/local/bin/node /usr/local/bin/node
+COPY --from=node-bin /usr/local/bin/npm /usr/local/bin/npm
+COPY --from=node-bin /usr/local/bin/npx /usr/local/bin/npx
+COPY --from=node-bin /usr/local/lib/node_modules /usr/local/lib/node_modules
 
-# Semgrep
-RUN pip install --no-cache-dir semgrep
+# Semgrep (pinned to avoid non-reproducible builds)
+RUN pip install --no-cache-dir 'semgrep>=1.45.0,<2.0'
 
 # Git config
 RUN git config --global user.name "Hermes Hunter" && \

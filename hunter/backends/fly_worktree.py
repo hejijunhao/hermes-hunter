@@ -63,13 +63,26 @@ class FlyWorktreeManager(WorktreeManager):
             # Fresh clone
             self.worktree_path.parent.mkdir(parents=True, exist_ok=True)
             logger.info("Cloning %s to %s", self._safe_url(), self.worktree_path)
-            subprocess.run(
-                ["git", "clone", self._repo_url, str(self.worktree_path)],
-                check=True,
-                capture_output=True,
-                text=True,
-                timeout=120,
-            )
+            try:
+                subprocess.run(
+                    ["git", "clone", self._repo_url, str(self.worktree_path)],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+            except subprocess.TimeoutExpired:
+                # Clean up partial clone directory before propagating.
+                if self.worktree_path.exists():
+                    shutil.rmtree(self.worktree_path)
+                raise WorktreeError("Clone timed out after 120s")
+            except subprocess.CalledProcessError as exc:
+                if self.worktree_path.exists():
+                    shutil.rmtree(self.worktree_path)
+                raise WorktreeError(
+                    f"Clone failed (exit {exc.returncode}): "
+                    f"{(exc.stderr or '')[:200]}"
+                ) from exc
         logger.info(
             "Clone ready: path=%s head=%s",
             self.worktree_path, self.get_head_commit()[:8],

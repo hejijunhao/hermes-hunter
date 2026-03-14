@@ -76,6 +76,47 @@ class TestSetup:
         assert len(pull_calls) > 0
 
 
+class TestSetupCloneFailure:
+    """H2 + M1: partial clone cleanup on failure."""
+
+    @patch("hunter.backends.fly_worktree.subprocess.run")
+    def test_timeout_cleans_up_partial_clone(self, mock_run, fly_wt, clone_path):
+        """TimeoutExpired during clone should remove partial dir and raise WorktreeError."""
+        # Create the partial clone directory as subprocess would
+        clone_path.mkdir(parents=True)
+        (clone_path / "partial_file").write_text("data")
+
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd="git clone", timeout=120)
+
+        with pytest.raises(WorktreeError, match="timed out"):
+            fly_wt.setup()
+
+        assert not clone_path.exists()
+
+    @patch("hunter.backends.fly_worktree.subprocess.run")
+    def test_clone_error_cleans_up_partial_clone(self, mock_run, fly_wt, clone_path):
+        """CalledProcessError during clone should remove partial dir and raise WorktreeError."""
+        clone_path.mkdir(parents=True)
+        (clone_path / "partial_file").write_text("data")
+
+        mock_run.side_effect = subprocess.CalledProcessError(
+            returncode=128, cmd="git clone", stderr="fatal: repo not found",
+        )
+
+        with pytest.raises(WorktreeError, match="Clone failed"):
+            fly_wt.setup()
+
+        assert not clone_path.exists()
+
+    @patch("hunter.backends.fly_worktree.subprocess.run")
+    def test_timeout_no_dir_still_raises(self, mock_run, fly_wt, clone_path):
+        """TimeoutExpired when no partial dir was created still raises WorktreeError."""
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd="git clone", timeout=120)
+
+        with pytest.raises(WorktreeError, match="timed out"):
+            fly_wt.setup()
+
+
 class TestTeardown:
 
     def test_removes_clone_directory(self, fly_wt, clone_path):
