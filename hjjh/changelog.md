@@ -1,5 +1,6 @@
 # Hermes Prime — Changelog
 
+- **5.0.0** — Bootstrap mode: empty-repo detection, bootstrap prompt injection, architecture seeding via Elephantasm, testing target list, automatic transition to normal mode
 - **4.1.0** — Pre-Phase-D hardening: retry logic in Fly API client, bounded history, TTL cache for `is_running`, clone verification in Hunter entrypoint
 - **4.0.0** — Deployment infrastructure: Dockerfiles, entrypoint scripts, fly.toml configs, deploy script — ready to run the two-machine system on Fly.io
 - **3.0.0** — Fly.io remote backend: `FlyMachinesClient`, `FlyConfig`, `FlyWorktreeManager`, `FlyHunterController` — full remote Hunter lifecycle via Fly Machines API
@@ -15,6 +16,54 @@
 - **1.2.0** — Elephantasm memory integration: `AnimaManager`, `OverseerMemoryBridge`, `HunterMemoryBridge`
 - **1.1.0** — Phase 1 foundation: package scaffolding, budget system, worktree manager, process controller
 - **1.0.0** — Foundation fork of Hermes Agent + architecture design
+
+---
+
+## 5.0.0 — Bootstrap Mode (Phase D)
+
+**Date:** 2026-03-14
+
+The Overseer can now detect an empty or minimal Hunter repository and enter a special bootstrap mode that guides it through building the Hunter from scratch. When the repo reaches a functionality threshold, the Overseer automatically transitions to normal improvement mode.
+
+### D1: Bootstrap Detection
+
+`BootstrapState` dataclass + `detect_bootstrap(worktree)` function in new `hunter/bootstrap.py`. Checks for Python files and skill files — bootstrap activates when the repo lacks **both**. Three trigger reasons (empty/no code/no skills). Re-detects on every Overseer startup (cheap, no stale-state risk).
+
+**Modified:** `hunter/overseer.py` — `_setup()` calls `detect_bootstrap()` after worktree setup.
+
+### D2: Bootstrap Prompt Augmentation
+
+**Created:** `hunter/prompts/bootstrap.md` — build order (skills → prompt → tools → wiring → deploy → iterate), file creation guidance, architecture references, testing targets, transition criteria.
+
+**Modified:** `hunter/bootstrap.py` — `load_bootstrap_prompt()` reads the prompt file. `hunter/overseer.py` — runtime injection into `ephemeral_system_prompt` per iteration (clearable on transition), plus a bootstrap-specific task section replacing the normal "Do nothing / Inject / Spawn" options with action-oriented build steps.
+
+### D3: Architecture Docs in Elephantasm
+
+`seed_architecture_knowledge()` extracts §3 (Hunter Architecture) and §8 (Code Evolution) from `hjjh/architecture.md` into Elephantasm as high-importance events. Idempotent via `animas.json` cache flag. Wired in `_setup()` inside the bootstrap-active check.
+
+### D4: Testing Target List
+
+`BOOTSTRAP_TESTING_TARGETS` constant — four known-vulnerable apps (Juice Shop, DVWA, WebGoat, crAPI) with repo URLs, tech stacks, and expected vulnerability types. Accessible programmatically via `get_testing_targets()` (returns copy) and inline in the bootstrap prompt.
+
+### D5: Bootstrap Transition Logic
+
+`TransitionResult` dataclass + `check_transition()` function. Three configurable thresholds: 5 security skills, 3 Python files, 10 commits. Checked at the start of each iteration — when all criteria are met, bootstrap state and prompt are cleared immediately. Transition event extracted to Elephantasm with counts as metadata.
+
+### D6: Tests
+
+32 new tests across two files: `test_hunter_bootstrap.py` (26 tests — detection, transition, prompt loading, testing targets, architecture seeding, section splitting) and `test_hunter_overseer.py` (6 tests in new `TestBootstrap` class — setup detection, prompt injection, bootstrap task section, transition clearing).
+
+### Files changed summary
+
+| File | Action | Lines | Purpose |
+|------|--------|-------|---------|
+| `hunter/bootstrap.py` | **Created** | 348 | Detection, transition, prompt loading, architecture seeding, testing targets |
+| `hunter/prompts/bootstrap.md` | **Created** | 74 | Bootstrap mode prompt content |
+| `hunter/overseer.py` | Modified | +45 net | Bootstrap detection, prompt injection, transition logic, bootstrap task |
+| `tests/test_hunter_bootstrap.py` | **Created** | 232 | 26 unit tests |
+| `tests/test_hunter_overseer.py` | Modified | +115 | 6 integration tests |
+
+**Tests:** 470 passed (+32 new, zero regressions).
 
 ---
 

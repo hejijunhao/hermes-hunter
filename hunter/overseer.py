@@ -125,6 +125,8 @@ class OverseerLoop:
         self._controller = None  # Created in _setup()
         self._conversation_history: List[Dict[str, Any]] = []
         self._iteration_count: int = 0
+        self._bootstrap_state = None  # Set in _setup()
+        self._bootstrap_prompt: Optional[str] = None  # Set in _setup()
 
     # ── Public API ──────────────────────────────────────────────────────
 
@@ -214,6 +216,12 @@ class OverseerLoop:
         if not self._controller.worktree.is_setup():
             self._controller.worktree.setup()
 
+        # Detect bootstrap mode (D1)
+        from hunter.bootstrap import detect_bootstrap
+        self._bootstrap_state = detect_bootstrap(self._controller.worktree)
+        if self._bootstrap_state.is_bootstrap:
+            logger.info("Bootstrap mode ACTIVE: %s", self._bootstrap_state.reason)
+
         # Initialise memory bridge (non-fatal)
         if self.memory is None:
             try:
@@ -223,6 +231,20 @@ class OverseerLoop:
                     "OverseerMemoryBridge unavailable: %s. Memory features disabled.", e
                 )
                 self.memory = None
+
+        # Load bootstrap prompt and seed architecture docs (D2b, D3)
+        if self._bootstrap_state.is_bootstrap:
+            from hunter.bootstrap import load_bootstrap_prompt
+            self._bootstrap_prompt = load_bootstrap_prompt()
+
+            if self.memory:
+                try:
+                    from hunter.bootstrap import seed_architecture_knowledge
+                    seed_architecture_knowledge(self.memory)
+                except Exception as e:
+                    logger.warning(
+                        "Architecture seeding failed (non-fatal): %s", e
+                    )
 
         # Create the Overseer's AIAgent
         self._agent = self._create_agent()
@@ -288,6 +310,26 @@ class OverseerLoop:
         self._iteration_count += 1
         logger.info("Overseer iteration %d starting", self._iteration_count)
 
+        # 0. Check bootstrap transition (D5)
+        if self._bootstrap_state and self._bootstrap_state.is_bootstrap:
+            from hunter.bootstrap import check_transition
+            transition = check_transition(self._controller.worktree)
+            if transition.ready:
+                logger.info("Bootstrap complete — transitioning to normal mode")
+                self._bootstrap_state.is_bootstrap = False
+                self._bootstrap_prompt = None
+                if self.memory:
+                    self.memory.extract_decision(
+                        "Bootstrap mode complete. "
+                        "Transitioning to normal improvement mode.",
+                        meta={
+                            "type": "bootstrap_transition",
+                            "skills": transition.skills_count,
+                            "python_files": transition.python_count,
+                            "commits": transition.commits_count,
+                        },
+                    )
+
         # 1. Reload budget, check hard stop
         self.budget.reload()
         budget_status = self.budget.check_budget()
@@ -322,6 +364,13 @@ class OverseerLoop:
             )
         else:
             self._agent.ephemeral_system_prompt = base_prompt
+
+        # 2b. Append bootstrap prompt if active (D2c)
+        if self._bootstrap_prompt:
+            self._agent.ephemeral_system_prompt += (
+                "\n\n---\n\n## Bootstrap Mode \u2014 ACTIVE\n\n"
+                + self._bootstrap_prompt
+            )
 
         # 3. Build iteration prompt (the "user message")
         prompt = self._build_iteration_prompt(budget_status)
@@ -414,20 +463,38 @@ class OverseerLoop:
         # Iteration metadata
         parts.append(f"\n**Overseer iteration:** {self._iteration_count}")
 
-        # Task prompt
-        parts.append(
-            "\n## Your Task\n"
-            "Review the Hunter's status and recent activity. Decide whether to:\n"
-            "- **Do nothing** — Hunter is performing well, let it work\n"
-            "- **Inject instruction** — soft steering via `hunter_inject`\n"
-            "- **Modify code + redeploy** — hard intervention via "
-            "`hunter_code_edit` + `hunter_redeploy`\n"
-            "- **Change model** — cost optimisation via `hunter_model_set`\n"
-            "- **Spawn Hunter** — if it's not running and should be\n"
-            "- **Adjust strategy** — check budget, review recent performance\n"
-            "\n"
-            "Use your tools to take action. If no action is needed, "
-            "explain briefly why."
-        )
+        # Task prompt — different for bootstrap vs normal mode
+        if self._bootstrap_state and self._bootstrap_state.is_bootstrap:
+            parts.append(
+                "\n## Your Task \u2014 Bootstrap\n"
+                "The Hunter repository is empty or minimal. "
+                "Build its capabilities.\n\n"
+                "1. Check what exists in the worktree (`hunter_code_read`)\n"
+                "2. Decide what to build next (follow the build order above)\n"
+                "3. Write it (`hunter_code_edit` with empty `old_string` "
+                "creates new files)\n"
+                "4. Commit when a logical unit is complete\n"
+                "5. When enough exists for a test, `hunter_redeploy` "
+                "and observe"
+            )
+        else:
+            parts.append(
+                "\n## Your Task\n"
+                "Review the Hunter's status and recent activity. "
+                "Decide whether to:\n"
+                "- **Do nothing** \u2014 Hunter is performing well, let it work\n"
+                "- **Inject instruction** \u2014 soft steering via "
+                "`hunter_inject`\n"
+                "- **Modify code + redeploy** \u2014 hard intervention via "
+                "`hunter_code_edit` + `hunter_redeploy`\n"
+                "- **Change model** \u2014 cost optimisation via "
+                "`hunter_model_set`\n"
+                "- **Spawn Hunter** \u2014 if it's not running and should be\n"
+                "- **Adjust strategy** \u2014 check budget, review recent "
+                "performance\n"
+                "\n"
+                "Use your tools to take action. If no action is needed, "
+                "explain briefly why."
+            )
 
         return "\n".join(parts)

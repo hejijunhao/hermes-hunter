@@ -630,3 +630,145 @@ class TestFirstRun:
         status = _make_budget_status()
         prompt = overseer._build_iteration_prompt(status)
         assert "Spawn" in prompt
+
+
+# =============================================================================
+# Tests — Bootstrap mode (Phase D)
+# =============================================================================
+
+class TestBootstrap:
+    """Tests for bootstrap detection, prompt injection, and transition."""
+
+    @patch("hunter.overseer.ensure_hunter_home")
+    @patch("hunter.backends.create_controller")
+    @patch("hunter.overseer.BudgetManager")
+    @patch("hunter.overseer.AnimaManager")
+    @patch("run_agent.AIAgent")
+    def test_setup_detects_bootstrap_empty_repo(
+        self, _agent, _anima, _budget, mock_factory, _ensure,
+    ):
+        mock_ctrl = MagicMock()
+        mock_ctrl.worktree.is_setup.return_value = True
+        mock_ctrl.worktree.list_files.return_value = []
+        mock_factory.return_value = mock_ctrl
+
+        loop = OverseerLoop()
+        loop._setup()
+
+        assert loop._bootstrap_state is not None
+        assert loop._bootstrap_state.is_bootstrap is True
+        assert loop._bootstrap_prompt is not None
+
+    @patch("hunter.overseer.ensure_hunter_home")
+    @patch("hunter.backends.create_controller")
+    @patch("hunter.overseer.BudgetManager")
+    @patch("hunter.overseer.AnimaManager")
+    @patch("run_agent.AIAgent")
+    def test_setup_no_bootstrap_functional_repo(
+        self, _agent, _anima, _budget, mock_factory, _ensure,
+    ):
+        mock_ctrl = MagicMock()
+        mock_ctrl.worktree.is_setup.return_value = True
+
+        def list_files(relative_dir=".", pattern="*"):
+            if pattern == "*.py":
+                return ["runner.py", "tools/scan.py", "tools/clone.py"]
+            if relative_dir == "skills" and pattern == "*.md":
+                return ["skills/owasp.md", "skills/idor.md"]
+            return []
+        mock_ctrl.worktree.list_files.side_effect = list_files
+        mock_factory.return_value = mock_ctrl
+
+        loop = OverseerLoop()
+        loop._setup()
+
+        assert loop._bootstrap_state is not None
+        assert loop._bootstrap_state.is_bootstrap is False
+        assert loop._bootstrap_prompt is None
+
+    def test_iteration_injects_bootstrap_prompt(
+        self, overseer, mock_controller, mock_agent,
+    ):
+        from hunter.bootstrap import BootstrapState
+        overseer._bootstrap_state = BootstrapState(
+            is_bootstrap=True, reason="empty", python_count=0, skills_count=0,
+        )
+        overseer._bootstrap_prompt = "BUILD THE HUNTER"
+
+        # Mock list_files for transition check (not ready yet)
+        mock_controller.worktree.list_files.return_value = []
+        mock_controller.worktree.get_recent_commits.return_value = []
+
+        overseer._iteration()
+
+        # The bootstrap prompt should have been appended to system prompt
+        prompt_set = mock_agent.ephemeral_system_prompt
+        assert "Bootstrap Mode" in prompt_set
+        assert "BUILD THE HUNTER" in prompt_set
+
+    def test_iteration_uses_bootstrap_task(self, overseer, mock_controller):
+        from hunter.bootstrap import BootstrapState
+        overseer._bootstrap_state = BootstrapState(
+            is_bootstrap=True, reason="empty", python_count=0, skills_count=0,
+        )
+
+        status = _make_budget_status()
+        prompt = overseer._build_iteration_prompt(status)
+        assert "Bootstrap" in prompt
+        assert "hunter_code_edit" in prompt
+        # Should NOT contain normal mode task
+        assert "Do nothing" not in prompt
+
+    def test_normal_mode_task(self, overseer):
+        from hunter.bootstrap import BootstrapState
+        overseer._bootstrap_state = BootstrapState(
+            is_bootstrap=False, reason="ok", python_count=5, skills_count=5,
+        )
+
+        status = _make_budget_status()
+        prompt = overseer._build_iteration_prompt(status)
+        assert "Do nothing" in prompt
+        assert "Bootstrap" not in prompt
+
+    def test_transition_clears_bootstrap(
+        self, overseer, mock_controller, mock_agent, mock_memory,
+    ):
+        from hunter.bootstrap import (
+            BootstrapState,
+            TRANSITION_MIN_COMMITS,
+            TRANSITION_MIN_PYTHON_FILES,
+            TRANSITION_MIN_SKILLS,
+        )
+        overseer._bootstrap_state = BootstrapState(
+            is_bootstrap=True, reason="empty", python_count=0, skills_count=0,
+        )
+        overseer._bootstrap_prompt = "BUILD THE HUNTER"
+
+        # Mock worktree to meet transition criteria
+        def list_files(relative_dir=".", pattern="*"):
+            if pattern == "*.py":
+                return [f"f{i}.py" for i in range(TRANSITION_MIN_PYTHON_FILES)]
+            if relative_dir == "skills" and pattern == "*.md":
+                return [f"s{i}.md" for i in range(TRANSITION_MIN_SKILLS)]
+            return []
+        mock_controller.worktree.list_files.side_effect = list_files
+        mock_controller.worktree.get_recent_commits.return_value = [
+            MagicMock() for _ in range(TRANSITION_MIN_COMMITS)
+        ]
+
+        overseer._iteration()
+
+        assert overseer._bootstrap_state.is_bootstrap is False
+        assert overseer._bootstrap_prompt is None
+
+        # Should have recorded the transition in memory
+        mock_memory.extract_decision.assert_any_call(
+            "Bootstrap mode complete. "
+            "Transitioning to normal improvement mode.",
+            meta=pytest.approx({
+                "type": "bootstrap_transition",
+                "skills": TRANSITION_MIN_SKILLS,
+                "python_files": TRANSITION_MIN_PYTHON_FILES,
+                "commits": TRANSITION_MIN_COMMITS,
+            }),
+        )
